@@ -24,18 +24,30 @@ const SwipeView: React.FC<SwipeViewProps> = ({ userRole, onMatch, onOpenChat, on
       if (!auth.currentUser) return;
       setLoading(true);
       try {
-        // Fetch all profiles
+        // 1. Fetch all profiles
         const querySnapshot = await getDocs(collection(db, "profiles"));
         const allProfiles: Profile[] = [];
         querySnapshot.forEach((doc) => {
           allProfiles.push(doc.data() as Profile);
         });
 
-        // Filter out current user and users of same role
-        // (Client-side filtering for MVP to avoid complex index requirements)
+        // 2. Fetch my swipes (history)
+        // We want to exclude anyone I have already swiped on (left or right)
+        const swipesQuery = query(
+          collection(db, "swipes"),
+          where("fromUserId", "==", auth.currentUser.uid)
+        );
+        const swipesSnapshot = await getDocs(swipesQuery);
+        const swipedUserIds = new Set<string>();
+        swipesSnapshot.forEach(doc => {
+          swipedUserIds.add(doc.data().toUserId);
+        });
+
+        // 3. Filter profiles
         const filtered = allProfiles.filter(p =>
           p.id !== auth.currentUser?.uid &&
-          p.role !== userRole
+          p.role !== userRole &&
+          !swipedUserIds.has(p.id)
         );
 
         setProfiles(filtered);
@@ -56,11 +68,12 @@ const SwipeView: React.FC<SwipeViewProps> = ({ userRole, onMatch, onOpenChat, on
 
     try {
       // Check if the other user has already liked us
-      // We query the 'likes' collection where fromUserId == targetUserId AND toUserId == currentUserId
+      // We query the 'swipes' collection where fromUserId == targetUserId AND toUserId == currentUserId AND liked == true
       const q = query(
-        collection(db, "likes"),
+        collection(db, "swipes"),
         where("fromUserId", "==", targetUserId),
-        where("toUserId", "==", auth.currentUser.uid)
+        where("toUserId", "==", auth.currentUser.uid),
+        where("liked", "==", true)
       );
 
       const querySnapshot = await getDocs(q);
@@ -71,27 +84,46 @@ const SwipeView: React.FC<SwipeViewProps> = ({ userRole, onMatch, onOpenChat, on
     }
   };
 
+  const createMatch = async (otherUser: Profile) => {
+    if (!auth.currentUser) return;
+    try {
+      // Create a match document
+      await addDoc(collection(db, "matches"), {
+        users: [auth.currentUser.uid, otherUser.id],
+        timestamp: new Date(),
+        lastMessage: '',
+        lastMessageTimestamp: new Date()
+      });
+    } catch (e) {
+      console.error("Error creating match:", e);
+    }
+  };
+
   const handleSwipe = async (liked: boolean) => {
     setIsFlipped(false);
 
-    if (liked && currentProfile && auth.currentUser) {
+    if (currentProfile && auth.currentUser) {
       try {
-        // 1. Record the like
-        await addDoc(collection(db, "likes"), {
+        // 1. Record the swipe (history)
+        await addDoc(collection(db, "swipes"), {
           fromUserId: auth.currentUser.uid,
           toUserId: currentProfile.id,
+          liked: liked,
           timestamp: new Date()
         });
 
-        // 2. Check for mutual like
-        const isMatch = await checkForMutualLike(currentProfile.id);
+        if (liked) {
+          // 2. Check for mutual like
+          const isMatch = await checkForMutualLike(currentProfile.id);
 
-        if (isMatch) {
-          setShowMatchOverlay(currentProfile);
-          onMatch(currentProfile);
+          if (isMatch) {
+            await createMatch(currentProfile);
+            setShowMatchOverlay(currentProfile);
+            onMatch(currentProfile);
+          }
         }
       } catch (error) {
-        console.error("Error processing like:", error);
+        console.error("Error processing swipe:", error);
       }
     }
 

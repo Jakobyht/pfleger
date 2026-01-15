@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 import { AppView, UserRole, Profile, ChatSession } from './types';
 import AuthView from './components/AuthView';
@@ -26,7 +26,7 @@ const App: React.FC = () => {
       if (user) {
         const docRef = doc(db, "profiles", user.uid);
         const docSnap = await getDoc(docRef);
-        
+
         if (docSnap.exists()) {
           setUserProfile(docSnap.data() as Profile);
           setView('SWIPE');
@@ -41,6 +41,36 @@ const App: React.FC = () => {
     });
     return unsubscribe;
   }, []);
+
+  // Listen for matches
+  useEffect(() => {
+    if (!userProfile) return;
+
+    const q = query(
+      collection(db, "matches"),
+      where("users", "array-contains", userProfile.id)
+    );
+
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const matchProfiles: Profile[] = [];
+
+      for (const docSnapshot of snapshot.docs) {
+        const data = docSnapshot.data();
+        const otherUserId = data.users.find((uid: string) => uid !== userProfile.id);
+
+        if (otherUserId) {
+          const userDoc = await getDoc(doc(db, "profiles", otherUserId));
+          if (userDoc.exists()) {
+            matchProfiles.push(userDoc.data() as Profile);
+          }
+        }
+      }
+
+      setMatches(matchProfiles);
+    });
+
+    return () => unsubscribe();
+  }, [userProfile]);
 
   const handleRoleSelect = (role: UserRole) => {
     if (!auth.currentUser) return;
@@ -83,12 +113,12 @@ const App: React.FC = () => {
     <div className="flex justify-between items-center py-4 px-6 bg-transparent shrink-0 relative z-40">
       <div className="w-10"></div>
       <div className="flex items-center gap-2">
-         <div className="bg-white/95 p-2 rounded-xl shadow-md">
-           <svg width="22" height="22" viewBox="0 0 24 24" fill="#F26A8D"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l8.84-8.84 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-         </div>
-         <span className="text-white font-bold text-2xl tracking-tight">NurseMatch</span>
+        <div className="bg-white/95 p-2 rounded-xl shadow-md">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="#F26A8D"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l8.84-8.84 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+        </div>
+        <span className="text-white font-bold text-2xl tracking-tight">NurseMatch</span>
       </div>
-      <button 
+      <button
         onClick={() => setIsNavOpen(true)}
         className="w-10 h-10 flex items-center justify-center text-white"
       >
@@ -101,28 +131,28 @@ const App: React.FC = () => {
     <div className="app-container">
       <main className="flex-1 overflow-hidden flex flex-col">
         {!['AUTH', 'ROLE_SELECT', 'PROFILE_EDIT'].includes(view) && <Header />}
-        
-        {view === 'AUTH' && <AuthView onLogin={() => {}} />}
+
+        {view === 'AUTH' && <AuthView onLogin={() => { }} />}
         {view === 'ROLE_SELECT' && <RoleSelectView onSelect={handleRoleSelect} />}
         {view === 'PROFILE_EDIT' && userProfile && (
           <ProfileEditView profile={userProfile} onSave={handleProfileSave} />
         )}
         {view === 'SWIPE' && userProfile && (
-          <SwipeView 
-            userRole={userProfile.role} 
-            onMatch={(p) => setMatches(prev => [...prev, p])} 
+          <SwipeView
+            userRole={userProfile.role}
+            onMatch={(p) => setMatches(prev => [...prev, p])}
             onOpenChat={(p) => {
-               setActiveChat({ id: p.id, participant: p, lastMessage: '', messages: [] });
-               setView('CHAT_DETAIL');
-            }} 
+              setActiveChat({ id: p.id, participant: p, lastMessage: '', messages: [] });
+              setView('CHAT_DETAIL');
+            }}
             onToggleNav={() => setIsNavOpen(true)}
           />
         )}
         {view === 'CHATS' && (
           <div className="flex-1 flex flex-col px-4 pb-6 max-w-xl mx-auto w-full">
             <ChatsListView matches={matches} onSelectChat={(p) => {
-               setActiveChat({ id: p.id, participant: p, lastMessage: '', messages: [] });
-               setView('CHAT_DETAIL');
+              setActiveChat({ id: p.id, participant: p, lastMessage: '', messages: [] });
+              setView('CHAT_DETAIL');
             }} />
           </div>
         )}
@@ -131,29 +161,29 @@ const App: React.FC = () => {
         )}
         {view === 'SETTINGS' && userProfile && (
           <div className="flex-1 flex flex-col px-4 pb-6 max-w-xl mx-auto w-full">
-            <SettingsView 
-              profile={userProfile} 
-              onEdit={() => setView('PROFILE_EDIT')} 
-              onLogout={handleLogout} 
+            <SettingsView
+              profile={userProfile}
+              onEdit={() => setView('PROFILE_EDIT')}
+              onLogout={handleLogout}
             />
           </div>
         )}
       </main>
 
       {isNavOpen && (
-        <div 
+        <div
           className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200"
           onClick={() => setIsNavOpen(false)}
         >
-          <div 
+          <div
             className="w-full max-w-lg p-6 animate-in slide-in-from-bottom duration-300 mb-4"
             onClick={e => e.stopPropagation()}
           >
-            <Navigation 
-              currentView={view} 
+            <Navigation
+              currentView={view}
               // Fix: replacing navigateTo with setView and closing navigation on selection
-              setView={(v) => { setView(v); setIsNavOpen(false); }} 
-              onClose={() => setIsNavOpen(false)} 
+              setView={(v) => { setView(v); setIsNavOpen(false); }}
+              onClose={() => setIsNavOpen(false)}
             />
           </div>
         </div>
